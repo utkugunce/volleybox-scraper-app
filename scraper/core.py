@@ -100,7 +100,13 @@ class VolleyboxScraper:
         # Simple checks for Cloudflare title/content
         if "just a moment" in html_lower or "bir dakika" in html_lower:
             return True
-        if "cloudflare" in html_lower and "challenge" in html_lower:
+        if "cloudflare" in html_lower and ("challenge" in html_lower or "security" in html_lower):
+            return True
+        if "verify you are human" in html_lower or "insan olduğunuzu" in html_lower:
+            return True
+        if "güvenlik kontrolü" in html_lower:
+            return True
+        if page.title and ("just a moment" in page.title.lower() or "bir dakika" in page.title.lower()):
             return True
             
         return False
