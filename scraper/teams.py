@@ -3,6 +3,7 @@ Team/Club scraping module for women.volleybox.net
 Handles team list and individual team profile scraping.
 """
 
+import time
 import re
 from rich.console import Console
 from rich.progress import track
