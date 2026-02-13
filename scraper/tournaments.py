@@ -120,7 +120,8 @@ def scrape_tournament_list(scraper, page_limit=5):
 
 def scrape_tournament_detail(scraper, url):
     """
-    Scrape a single tournament/league detail page.
+    Scrape a single tournament/league detail page using DrissionPage directly.
+    Navigates to the main page for name/teams and to /table for standings.
 
     Args:
         scraper: VolleyboxScraper instance
@@ -131,90 +132,47 @@ def scrape_tournament_detail(scraper, url):
     """
     console.print(f"[bold cyan]🏆 Turnuva detayı çekiliyor: {url}[/bold cyan]")
 
-    soup = scraper.get_page(url)
-    if not soup:
+    page = scraper._get_page()
+    page.get(url)
+
+    # Wait for Cloudflare
+    if not scraper._wait_for_cloudflare():
+        console.print("[red]Cloudflare geçilemedi.[/red]")
         return None
 
+    time.sleep(2)
     tournament = {"url": url}
 
-    # --- Name ---
-    name_el = soup.select_one("h1, .tournament-name, .league-name, .competition-name")
-    if name_el:
-        tournament["name"] = name_el.get_text(strip=True)
+    # --- Name (h1.dInline.marginRight10 or just h1) ---
+    try:
+        name_el = page.ele('t:h1')
+        if name_el:
+            tournament["name"] = name_el.text.strip()
+            console.print(f"  Turnuva adı: {tournament['name']}")
+    except Exception:
+        tournament["name"] = "N/A"
 
-    # --- Info section ---
-    info_section = soup.select_one(".tournament-info, .league-info, .competition-info, .details, main")
-    if not info_section:
-        info_section = soup
+    # --- Extract season from name ---
+    name = tournament.get("name", "")
+    import re as re_mod
+    season_match = re_mod.search(r'(\d{4}/\d{2,4})', name)
+    if season_match:
+        tournament["season"] = season_match.group(1)
 
-    field_map = {
-        "ülke": "country",
-        "country": "country",
-        "sezon": "season",
-        "season": "season",
-        "başlangıç": "start_date",
-        "start": "start_date",
-        "bitiş": "end_date",
-        "end": "end_date",
-        "takım sayısı": "team_count",
-        "teams": "team_count",
-    }
-
-    for row in info_section.select("tr"):
-        cells = row.select("td, th")
-        if len(cells) >= 2:
-            label = cells[0].get_text(strip=True).lower()
-            value = cells[1].get_text(strip=True)
-            for tr_key, en_key in field_map.items():
-                if tr_key in label:
-                    tournament[en_key] = value
-                    break
-
-    # --- Standings/Table ---
-    standings = []
-    table = soup.select_one(".standings, .ranking-table, .league-table, table.table")
-    if table:
-        headers = [th.get_text(strip=True) for th in table.select("thead th, tr:first-child th")]
-        for row in table.select("tbody tr, tr")[1:]:  # Skip header row
-            cells = row.select("td")
-            if not cells:
-                continue
-
-            row_data = {}
-            if headers:
-                for i, cell in enumerate(cells):
-                    if i < len(headers):
-                        row_data[headers[i]] = cell.get_text(strip=True)
-                    else:
-                        row_data[f"col_{i}"] = cell.get_text(strip=True)
-            else:
-                for i, cell in enumerate(cells):
-                    row_data[f"col_{i}"] = cell.get_text(strip=True)
-
-            # Try to find team link
-            team_link = row.select_one("a[href*='-t']")
-            if team_link:
-                row_data["team_name"] = team_link.get_text(strip=True)
-                href = team_link.get("href", "")
-                row_data["team_url"] = href if href.startswith("http") else f"https://women.volleybox.net{href}"
-
-            if row_data:
-                standings.append(row_data)
-
-    if standings:
-        tournament["standings"] = standings
-
-    # --- Teams list ---
+    # --- Teams from classification section ---
     teams = []
-    for team_link in soup.select("a[href*='-t']"):
-        href = team_link.get("href", "")
-        if re.search(r'-t\d+$', href):
-            name = team_link.get_text(strip=True)
-            team_url = href if href.startswith("http") else f"https://women.volleybox.net{href}"
-            if name and len(name) > 1:
-                teams.append({"name": name, "url": team_url})
+    try:
+        team_links = page.eles('xpath://a[contains(@href, "-t") and contains(@href, "/tr/")]')
+        for link in team_links:
+            href = link.attr('href') or ''
+            text = link.text.strip() if link.text else ''
+            if re.search(r'-t\d+$', href) and text and len(text) > 1:
+                full_url = href if href.startswith('http') else f"https://women.volleybox.net{href}"
+                teams.append({"name": text, "url": full_url})
+    except Exception as e:
+        console.print(f"  [yellow]Takım çekme hatası: {e}[/yellow]")
 
-    # Deduplicate
+    # Deduplicate teams
     seen = set()
     unique_teams = []
     for t in teams:
@@ -225,31 +183,95 @@ def scrape_tournament_detail(scraper, url):
 
     if teams:
         tournament["teams"] = teams
+        tournament["team_count"] = len(teams)
+        console.print(f"  {len(teams)} takım bulundu")
 
-    # --- Match results ---
-    matches = []
-    match_section = soup.select_one(".matches, .results, .schedule, .fixtures")
-    if match_section:
-        for match_el in match_section.select(".match, .match-row, tr"):
-            match_data = {}
-            teams_in_match = match_el.select("a[href*='-t']")
-            if len(teams_in_match) >= 2:
-                match_data["home_team"] = teams_in_match[0].get_text(strip=True)
-                match_data["away_team"] = teams_in_match[1].get_text(strip=True)
+    # --- Navigate to /table for standings ---
+    table_url = url.rstrip('/') + '/table'
+    console.print(f"  Puan tablosu çekiliyor: {table_url}")
 
-            score_el = match_el.select_one(".score, .result")
-            if score_el:
-                match_data["score"] = score_el.get_text(strip=True)
+    try:
+        page.get(table_url)
+        if not scraper._wait_for_cloudflare():
+            console.print("[yellow]  /table sayfasında Cloudflare geçilemedi[/yellow]")
+        else:
+            time.sleep(3)
 
-            date_el = match_el.select_one(".date, .match-date, time")
-            if date_el:
-                match_data["date"] = date_el.get_text(strip=True)
+            # Get the HTML and parse with BeautifulSoup
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(page.html, "lxml")
 
-            if match_data:
-                matches.append(match_data)
+            standings = []
+            # Volleybox uses div-based tables, not <table> elements
+            # Structure: div.tournament-table-container > h3.tournament-table-name + div.team
+            containers = soup.select("div.tournament-table-container")
+            console.print(f"  {len(containers)} grup tablosu bulundu")
 
-    if matches:
-        tournament["matches"] = matches
+            for container in containers:
+                # Group name
+                group_h3 = container.select_one("h3.tournament-table-name")
+                group_name = group_h3.get_text(strip=True) if group_h3 else "N/A"
+
+                # Team rows: div.team.top_dotted_line
+                team_rows = container.select("div.team.top_dotted_line")
+                for row in team_rows:
+                    row_data = {"group": group_name}
+
+                    # Rank
+                    place_el = row.select_one("div.team_place")
+                    if place_el:
+                        row_data["sıra"] = place_el.get_text(strip=True)
+
+                    # Team name (from a.title link)
+                    name_link = row.select_one("a.title")
+                    if name_link:
+                        row_data["takım"] = name_link.get_text(strip=True)
+                        href = name_link.get("href", "")
+                        row_data["team_url"] = href if href.startswith("http") else f"https://women.volleybox.net{href}"
+
+                    # Points
+                    points_el = row.select_one("div.team_points")
+                    if points_el:
+                        row_data["puan"] = points_el.get_text(strip=True)
+
+                    # Wins
+                    won_el = row.select_one("div.team_won_matches")
+                    if won_el:
+                        row_data["galibiyet"] = won_el.get_text(strip=True)
+
+                    # Losses
+                    lost_el = row.select_one("div.team_lost_matches")
+                    if lost_el:
+                        row_data["mağlubiyet"] = lost_el.get_text(strip=True)
+
+                    # Sets won
+                    won_sets_el = row.select_one("div.team_won_sets")
+                    if won_sets_el:
+                        row_data["kazanılan_set"] = won_sets_el.get_text(strip=True)
+
+                    # Sets lost
+                    lost_sets_el = row.select_one("div.team_lost_sets")
+                    if lost_sets_el:
+                        row_data["kaybedilen_set"] = lost_sets_el.get_text(strip=True)
+
+                    if row_data.get("takım"):
+                        standings.append(row_data)
+
+            if standings:
+                tournament["standings"] = standings
+                console.print(f"  [green]{len(standings)} sıralama satırı bulundu[/green]")
+            else:
+                console.print("  [yellow]Puan tablosu bulunamadı[/yellow]")
+
+    except Exception as e:
+        console.print(f"  [yellow]Puan tablosu hatası: {e}[/yellow]")
+
+    # --- Extract country from tournament name ---
+    name_text = tournament.get("name", "").lower()
+    if "türkiye" in name_text or "turkiye" in name_text:
+        tournament["country"] = "Türkiye"
+    elif "turkey" in name_text:
+        tournament["country"] = "Turkey"
 
     console.print(f"[bold green]✓ Turnuva çekildi: {tournament.get('name', 'N/A')}[/bold green]")
     return tournament
