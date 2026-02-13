@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+venv/
+env/
+.env
+browser_data/
+node_modules/
+dist/
+.DS_Store
+debug_matches_state.png
+debug_html_output.html
