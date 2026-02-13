@@ -267,15 +267,70 @@ elif page == "Players":
 # --- TOURNAMENTS ---
 elif page == "Tournaments":
     st.title("Tournaments")
-    if st.button("Load Tournaments"):
-         with st.spinner("Fetching tournaments..."):
-            scraper = get_scraper()
-            st.session_state.tournaments = scrape_tournament_list(scraper, page_limit=1)
     
-    if 'tournaments' in st.session_state:
-        for tourney in st.session_state.tournaments:
-            with st.expander(tourney.get('name', 'Tournament')):
-                st.write(f"Season: {tourney.get('season', '2024/25')}")
-                st.write(f"Link: {tourney.get('url', '#')}")
+    tab_list, tab_scrape = st.tabs(["Browse List", "Scrape by URL"])
+    
+    with tab_list:
+        if st.button("Load Tournaments"):
+             with st.spinner("Fetching tournaments..."):
+                scraper = get_scraper()
+                st.session_state.tournaments = scrape_tournament_list(scraper, page_limit=1)
+        
+        if 'tournaments' in st.session_state:
+            for tourney in st.session_state.tournaments:
+                with st.expander(tourney.get('name', 'Tournament')):
+                    st.write(f"Season: {tourney.get('season', '2024/25')}")
+                    st.write(f"Link: {tourney.get('url', '#')}")
+    
+    with tab_scrape:
+        st.subheader("Scrape Specific Tournament")
+        tourney_url = st.text_input("Enter Tournament URL", placeholder="https://women.volleybox.net/...")
+        
+        if st.button("Scrape Tournament Data"):
+            if not tourney_url:
+                st.warning("Please enter a URL first.")
+            else:
+                try:
+                    scraper = get_scraper()
+                    
+                    # 1. Scrape Info & Standings
+                    with st.status("Scraping tournament data...", expanded=True) as status:
+                        status.write("Fetching details & standings...")
+                        detail = scrape_tournament_detail(scraper, tourney_url)
+                        st.session_state.current_tournament = detail
+                        
+                        status.write("Fetching matches (this may take a while)...")
+                        # Construct matches URL (usually just append /matches or similar, but for now let's hope the scraper handles it or we use the detail)
+                        # Actually scrape_tournament_matches needs a specific matches URL mostly.
+                        # Let's try to deduce it or check if 'matches' key exists in detail (it does for recent/few matches)
+                        
+                        # If the user provided a main tournament page, scrape_tournament_detail gets basic info + matches displayed there
+                        # If we want ALL matches, we might need to find the "matches" link in the detail and scrape that.
+                        
+                        status.update(label="Scraping complete!", state="complete", expanded=False)
+                    
+                    if detail:
+                        st.success(f"Loaded: {detail.get('name')}")
+                        
+                        # Basic Info
+                        col1, col2, col3 = st.columns(3)
+                        col1.metric("Season", detail.get('season', 'N/A'))
+                        col2.metric("Teams", detail.get('team_count', 'N/A'))
+                        col3.metric("Country", detail.get('country', 'N/A'))
+                        
+                        # Standings
+                        if detail.get('standings'):
+                            st.subheader("Standings")
+                            st.dataframe(detail['standings'], use_container_width=True)
+                        
+                        # Matches
+                        if detail.get('matches'):
+                            st.subheader("Matches")
+                            st.dataframe(detail['matches'], use_container_width=True)
+                        else:
+                            st.info("No matches found on the main page. Try the matches tab link if available.")
+                            
+                except Exception as e:
+                    st.error(f"An error occurred: {str(e)}")
 
 
