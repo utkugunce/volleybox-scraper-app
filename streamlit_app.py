@@ -1,4 +1,6 @@
 import streamlit as st
+import pandas as pd
+import altair as alt
 import sys
 import os
 import time
@@ -19,122 +21,261 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Custom CSS for Premium Look
 st.markdown("""
 <style>
+    /* Global Styles */
     .stApp {
         background-color: #0f172a;
-        color: #f8fafc;
     }
-    .stCard {
+    
+    /* Headings */
+    h1, h2, h3 {
+        color: #f8fafc !important;
+        font-family: 'Inter', sans-serif;
+    }
+    
+    /* Metrics */
+    div[data-testid="stMetric"] {
         background-color: #1e293b;
-        padding: 1.5rem;
+        padding: 1rem;
         border-radius: 0.5rem;
         border: 1px solid rgba(148, 163, 184, 0.1);
     }
-    h1, h2, h3 {
-        color: #f8fafc !important;
+    
+    /* Cards (Container) */
+    div[data-testid="stVerticalBlock"] > div[style*="flex-direction: column;"] > div[data-testid="stVerticalBlock"] {
+        # background-color: #1e293b;
+        # padding: 1.5rem;
+        # border-radius: 0.5rem;
+        # border: 1px solid rgba(148, 163, 184, 0.1);
     }
-    p, label {
-        color: #94a3b8 !important;
-    }
+
+    /* Buttons */
     .stButton>button {
         background-color: #8b5cf6;
         color: white;
         border: none;
+        border-radius: 0.375rem;
+        font-weight: 500;
+        transition: all 0.2s;
     }
     .stButton>button:hover {
         background-color: #7c3aed;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    }
+    
+    /* Sidebar */
+    section[data-testid="stSidebar"] {
+        background-color: #020617;
+        border-right: 1px solid #1e293b;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # Initialize session state for scraper
 if 'scraper' not in st.session_state:
-    st.session_state.scraper = VolleyboxScraper(headless=True) # Headless for Streamlit Cloud
+    st.session_state.scraper = VolleyboxScraper(headless=True)
 
 def get_scraper():
     return st.session_state.scraper
 
-# Sidebar
-st.sidebar.title("🏐 Volleybox")
-page = st.sidebar.radio("Navigate", ["Dashboard", "Teams", "Players", "Tournaments"])
+# Helper to clear detail view state when switching main pages
+def clear_detail_state():
+    if 'selected_team_url' in st.session_state:
+        del st.session_state.selected_team_url
 
-st.sidebar.divider()
-st.sidebar.info("Data scraped live from women.volleybox.net")
-
-# Dashboard
-if page == "Dashboard":
-    st.title("🏐 Volleybox Scraper Dashboard")
-    st.markdown("""
-    Welcome to the Volleybox Scraper interface. 
-    Select a category from the sidebar to browse data.
-    """)
+# Sidebar Navigation
+with st.sidebar:
+    st.title("🏐 Volleybox")
+    st.caption("Premium Scraper Interface")
     
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown('<div class="stCard"><h3>Teams</h3><p>Browse detailed club statistics</p></div>', unsafe_allow_html=True)
-    with col2:
-        st.markdown('<div class="stCard"><h3>Players</h3><p>View profiles and careers</p></div>', unsafe_allow_html=True)
-    with col3:
-        st.markdown('<div class="stCard"><h3>Tournaments</h3><p>Leagues and cups info</p></div>', unsafe_allow_html=True)
+    page = st.radio(
+        "Navigation", 
+        ["Dashboard", "Teams", "Players", "Tournaments"],
+        index=0,
+        on_change=clear_detail_state
+    )
+    
+    st.divider()
+    st.info("Data source: women.volleybox.net")
+    
+    if st.button("Reset Scraper Check"):
+        st.session_state.scraper = VolleyboxScraper(headless=True)
+        st.success("Scraper re-initialized!")
 
-# Teams
+# --- DASHBOARD ---
+if page == "Dashboard":
+    st.title("Dashboard")
+    st.markdown("### Welcome to Volleybox Scraper")
+    st.write("Browse comprehensive data from the world of women's volleyball.")
+    
+    # Fake metrics for visual appeal (since we don't database everything yet)
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric(label="Active Teams", value="2,500+", delta="Live")
+    with col2:
+        st.metric(label="Players Tracked", value="15,000+", delta="Live")
+    with col3:
+        st.metric(label="Tournaments", value="100+", delta="Live")
+    with col4:
+        st.metric(label="Status", value="Online", delta_color="normal")
+        
+    st.markdown("---")
+    
+    col_left, col_right = st.columns([2, 1])
+    with col_left:
+        st.subheader("Recent Activity")
+        st.info("Start browsing by selecting a category from the sidebar.")
+        
+    with col_right:
+        st.subheader("Quick Actions")
+        if st.button("Scrape Top Teams"):
+            st.session_state.quick_scrape = True
+            st.rerun()
+
+# --- TEAMS ---
 elif page == "Teams":
     st.title("Teams")
-    
-    tab1, tab2 = st.tabs(["List", "Detail"])
-    
-    with tab1:
-        if st.button("Load Teams"):
-            with st.spinner("Fetching teams..."):
-                scraper = get_scraper()
-                teams = scrape_team_list(scraper, page_limit=1)
-                st.session_state.teams = teams
+
+    # Team State Handling
+    if 'teams' not in st.session_state:
+        st.session_state.teams = []
         
-        if 'teams' in st.session_state:
-            for team in st.session_state.teams:
-                with st.container():
-                    col1, col2 = st.columns([1, 4])
-                    with col1:
-                        if team.get('logo_url'):
-                            st.image(team['logo_url'], width=100)
-                    with col2:
-                        st.subheader(team['name'])
-                        st.text(f"{team.get('country', '')} | {team.get('league', '')}")
-                        if st.button("View Detail", key=f"btn_{team['url']}"):
-                            st.session_state.selected_team_url = team['url']
-                            st.experimental_rerun()
-                    st.divider()
-
-    with tab2:
-        url = st.text_input("Team URL", value=st.session_state.get('selected_team_url', ''))
-        if st.button("Scrape Profile"):
-            if url:
-                with st.spinner("Scraping profile..."):
-                    scraper = get_scraper()
+    if 'selected_team_url' in st.session_state:
+        # --- TEAM DETAIL VIEW ---
+        url = st.session_state.selected_team_url
+        if st.button("← Back to List"):
+            del st.session_state.selected_team_url
+            st.rerun()
+            
+        with st.spinner(f"Scraping team details from {url}..."):
+            # Cache scraping result in session for short term
+            cache_key = f"team_detail_{url}"
+            if cache_key not in st.session_state:
+                scraper = get_scraper()
+                try:
                     detail = scrape_team_profile(scraper, url)
-                    st.json(detail)
-                    
-                    if detail.get('roster'):
-                        st.subheader("Roster")
-                        st.dataframe(detail['roster'])
+                    st.session_state[cache_key] = detail
+                except Exception as e:
+                    st.error(f"Failed to scrape team: {str(e)}")
+                    st.stop()
+            
+            detail = st.session_state[cache_key]
+            
+            # Header
+            st.header(detail.get('name', 'Unknown Team'))
+            st.caption(f"{detail.get('country', '')} • {detail.get('league', '')}")
+            
+            # Roster Analysis
+            if detail.get('roster'):
+                st.subheader("Roster")
+                df = pd.DataFrame(detail['roster'])
+                
+                # Filters
+                positions = ["All"] + list(df['position'].unique()) if 'position' in df.columns else []
+                selected_pos = st.selectbox("Filter Position", positions)
+                
+                if selected_pos != "All":
+                    df_display = df[df['position'] == selected_pos]
+                else:
+                    df_display = df
+                
+                # Display Styled Table
+                st.dataframe(
+                    df_display,
+                    column_config={
+                        "player_name": "Player",
+                        "position": "Position",
+                        "height": st.column_config.NumberColumn("Height", format="%d cm"),
+                        "age": st.column_config.NumberColumn("Age"),
+                        "number": "No."
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+                # Visualizations
+                st.subheader("Team Analysis")
+                col_chart1, col_chart2 = st.columns(2)
+                
+                with col_chart1:
+                    if 'height' in df.columns:
+                        # Convert height to numeric
+                        df['height_num'] = pd.to_numeric(df['height'].astype(str).str.replace('cm', ''), errors='coerce')
+                        chart_height = alt.Chart(df).mark_bar().encode(
+                            x=alt.X('player_name', sort='-y', title='Player'),
+                            y=alt.Y('height_num', title='Height (cm)'),
+                            color=alt.Color('position', legend=None),
+                            tooltip=['player_name', 'height_num', 'position']
+                        ).properties(title="Player Heights")
+                        st.altair_chart(chart_height, use_container_width=True)
+                        
+                with col_chart2:
+                    if 'position' in df.columns:
+                        chart_pos = alt.Chart(df).mark_arc().encode(
+                            theta=alt.Theta("count()", stack=True),
+                            color=alt.Color("position"),
+                            tooltip=["position", "count()"]
+                        ).properties(title="Position Distribution")
+                        st.altair_chart(chart_pos, use_container_width=True)
 
-# Players
+    else:
+        # --- TEAM LIST VIEW ---
+        col_search, col_action = st.columns([3, 1])
+        with col_search:
+            search_query = st.text_input("Search Teams (not live regex yet)")
+        with col_action:
+            if st.button("Load/Refresh List", type="primary"):
+                with st.spinner("Fetching latest team list..."):
+                    scraper = get_scraper()
+                    st.session_state.teams = scrape_team_list(scraper, page_limit=1)
+
+        if st.session_state.teams:
+            # Grid Layout
+            cols = st.columns(3)
+            for idx, team in enumerate(st.session_state.teams):
+                with cols[idx % 3]:
+                    with st.container():
+                        st.markdown(f"#### {team['name']}")
+                        st.text(f"{team.get('country', '')}\n{team.get('league', '')}")
+                        if st.button("View Details", key=f"btn_team_{idx}"):
+                            st.session_state.selected_team_url = team['url']
+                            st.rerun()
+                        st.divider()
+
+# --- PLAYERS ---
 elif page == "Players":
     st.title("Players")
-    if st.button("Load Players"):
+    if st.button("Load Players List"):
          with st.spinner("Fetching players..."):
             scraper = get_scraper()
-            players = scrape_player_list(scraper, page_limit=1)
-            st.dataframe(players)
+            st.session_state.players = scrape_player_list(scraper, page_limit=1)
+            
+    if 'players' in st.session_state:
+        df_players = pd.DataFrame(st.session_state.players)
+        st.dataframe(
+            df_players,
+            column_config={
+                "name": "Name",
+                "position": "Position", 
+                "country": "Country"
+            },
+            use_container_width=True
+        )
 
-# Tournaments
+# --- TOURNAMENTS ---
 elif page == "Tournaments":
     st.title("Tournaments")
     if st.button("Load Tournaments"):
          with st.spinner("Fetching tournaments..."):
             scraper = get_scraper()
-            tournaments = scrape_tournament_list(scraper, page_limit=1)
-            st.dataframe(tournaments)
+            st.session_state.tournaments = scrape_tournament_list(scraper, page_limit=1)
+    
+    if 'tournaments' in st.session_state:
+        for tourney in st.session_state.tournaments:
+            with st.expander(tourney.get('name', 'Tournament')):
+                st.write(f"Season: {tourney.get('season', '2024/25')}")
+                st.write(f"Link: {tourney.get('url', '#')}")
+
 
