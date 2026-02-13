@@ -129,7 +129,7 @@ def scrape_team_list(scraper, page_limit=5):
 
 def scrape_team_profile(scraper, url):
     """
-    Scrape a single team/club profile page.
+    Scrape a single team/club profile page using DrissionPage directly.
 
     Args:
         scraper: VolleyboxScraper instance
@@ -140,23 +140,31 @@ def scrape_team_profile(scraper, url):
     """
     console.print(f"[bold cyan]🏐 Takım profili çekiliyor: {url}[/bold cyan]")
 
-    soup = scraper.get_page(url)
-    if not soup:
-        return None
+    page = scraper._get_page()
+    page.get(url)
 
+    if not scraper._wait_for_cloudflare():
+        console.print("[red]Cloudflare geçilemedi.[/red]")
+        return None
+    
+    time.sleep(1)
     team = {"url": url}
 
     # --- Name ---
-    name_el = soup.select_one("h1, .team-name, .club-name, .profile-name")
-    if name_el:
-        team["name"] = name_el.get_text(strip=True)
+    try:
+        name_el = page.ele('t:h1')
+        if name_el:
+            team["name"] = name_el.text.strip()
+            console.print(f"  Takım adı: {team['name']}")
+    except Exception:
+        team["name"] = "N/A"
 
-    # --- Info section ---
-    info_section = soup.select_one(".club-info, .team-info, .info-table, .details, main")
-    if not info_section:
-        info_section = soup
-
-    field_map = {
+    # --- Info section (dl/dt/dd structure) ---
+    # Volleybox info is often in a dl inside a div.display-flex
+    # key is in dt, value in dd (or just text after dt if no dd?)
+    # Based on trace: dt.info-header -> parent div.display-flex -> parent dl
+    
+    info_map = {
         "ülke": "country",
         "country": "country",
         "şehir": "city",
@@ -172,81 +180,31 @@ def scrape_team_profile(scraper, url):
         "president": "president",
     }
 
-    # Table rows
-    for row in info_section.select("tr"):
-        cells = row.select("td, th")
-        if len(cells) >= 2:
-            label = cells[0].get_text(strip=True).lower()
-            value = cells[1].get_text(strip=True)
-            for tr_key, en_key in field_map.items():
-                if tr_key in label:
-                    team[en_key] = value
-                    break
-
-    # Definition lists
-    dts = info_section.select("dt")
-    dds = info_section.select("dd")
-    for dt, dd in zip(dts, dds):
-        label = dt.get_text(strip=True).lower()
-        value = dd.get_text(strip=True)
-        for tr_key, en_key in field_map.items():
-            if tr_key in label:
-                team[en_key] = value
-                break
-
-    # --- Current Roster ---
-    roster = []
-    
-    # Heuristic: Find the container with the most player links
-    candidates = []
-    # Look for any div or section that might contain players
-    for container in soup.select("div, section, table"):
-        links = container.select("a[href*='-p']")
-        # Filter out links that are too deep (don't count children's links if parent already counted? 
-        # Actually selecting all is fine, we just want the dense one)
-        
-        # We need a container that has direct-ish access.
-        # Let's just look at all player links and find their common ancestor?
-        pass
-
-    # Better approach: Get all player links, find the most common parent (limit to relevant block elements)
-    all_player_links = soup.select("a[href*='-p']")
-    if all_player_links:
-        from collections import Counter
-        parents = []
-        for link in all_player_links:
-            # Find the closest semantic parent (div, ul, table, section)
-            p = link.find_parent(["div", "ul", "table", "section", "tbody"])
-            if p:
-                parents.append(p)
-        
-        if parents:
-            # Find the parent that appears most often (this is likely the roster container)
-            most_common_parent = Counter(parents).most_common(1)[0][0]
+    try:
+        # Find all dt elements which are labels
+        dts = page.eles('t:dt')
+        for dt in dts:
+            label = dt.text.strip().lower().replace(":", "")
             
-            # Now extract distinct players from this container
-            seen_urls = set()
-            for player_el in most_common_parent.select("a[href*='-p']"):
-                player_href = player_el.get("href", "")
-                if re.search(r'-p\d+$', player_href):
-                    full_url = player_href if player_href.startswith("http") else f"https://women.volleybox.net{player_href}"
-                    
-                    if full_url in seen_urls:
-                        continue
-                    seen_urls.add(full_url)
-                    
-                    player_name = player_el.get_text(strip=True)
-                    # Fallback for name
-                    if not player_name:
-                        player_name = player_el.get("title", "").strip()
-                    if not player_name:
-                        img = player_el.select_one("img")
-                        if img:
-                            player_name = img.get("alt", "").strip() or img.get("title", "").strip()
-                            
-                    if player_name and len(player_name) > 1:
-                        # Try to find position, number, etc.
-                        # Usually position is in a sibling or close by
+            # The value is usually in the sibling or next element
+            # Structure is often dt... dd... or dt... span...
+            # In the trace it showed dt is inside a div.display-flex. 
+            # The value might be a sibling element or text node.
+            
+            val_el = dt.next()
+            if val_el:
+                value = val_el.text.strip()
+                
+                for k, v in info_map.items():
+                    if k in label:
+                        team[v] = value
+                        # print(f"    {v}: {value}")
+                        break
+    except Exception as e:
+        console.print(f"  [yellow]Bilgi çekme hatası: {e}[/yellow]")
+
+    # --- Roster (div.team-roster-row) ---
+    roster = []
                         position = ""
                         number = ""
                         
