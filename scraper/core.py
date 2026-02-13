@@ -51,6 +51,15 @@ class VolleyboxScraper:
             if self.headless:
                 co.headless()
 
+            # Linux/Streamlit Cloud specific path
+            if os.name == 'posix':
+                # Common paths for Chromium on Debian/Streamlit Cloud
+                possible_paths = ["/usr/bin/chromium", "/usr/bin/chromium-browser"]
+                for path in possible_paths:
+                    if os.path.exists(path):
+                        co.set_paths(browser_path=path)
+                        break
+
             self._page = ChromiumPage(co)
 
             # Additional CDP overrides to hide automation
