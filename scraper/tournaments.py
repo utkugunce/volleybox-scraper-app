@@ -255,7 +255,7 @@ def scrape_tournament_detail(scraper, url):
     return tournament
 
 
-def scrape_tournament_matches(scraper, url):
+def scrape_tournament_matches(scraper, url, progress_callback=None):
     """
     Scrape all matches from a tournament matches page.
     Handles multiple rounds and 'Show More' pagination using browser interaction.
@@ -263,6 +263,7 @@ def scrape_tournament_matches(scraper, url):
     Args:
         scraper: VolleyboxScraper instance
         url: Tournament matches URL
+        progress_callback: Optional callable(round_index, round_count, match_count, round_name)
 
     Returns:
         List of dicts with match data
@@ -306,6 +307,8 @@ def scrape_tournament_matches(scraper, url):
 
     round_count = len(round_buttons)
     console.print(f"  [dim]{round_count} tur/grup bulundu.[/dim]")
+    if progress_callback:
+        progress_callback(0, round_count, 0, "Hazırlanıyor...")
 
     for i in range(round_count):
         if round_buttons[i]:
@@ -404,6 +407,8 @@ def scrape_tournament_matches(scraper, url):
             round_match_count += 1
             
         console.print(f"    [green]✓ {round_match_count} maç eklendi (Genişletme: {show_more_count}).[/green]")
+        if progress_callback:
+            progress_callback(i + 1, round_count, len(all_matches), btn_text if round_buttons[i] else f"Tur {i+1}")
 
     console.print(f"[bold green]✓ Toplam {len(all_matches)} maç çekildi.[/bold green]")
     return all_matches
